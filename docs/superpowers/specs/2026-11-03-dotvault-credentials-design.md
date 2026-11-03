@@ -18,7 +18,9 @@ Any field that is not such an object (something written by hand) is skipped.
 
 **slk always mints the access token; dotvault only carries the cookie.** At startup, for each field, slk mints the `xoxc` token from the cookie and domain (the same page scrape as `--add-workspace`) and identifies the team with `auth.test`, which also confirms the session belongs to that subdomain. The token lives in memory only. A field that happens to carry a token or team ID is not trusted for either: the cookie is the credential.
 
-Before any cookie is sent, the field's `domain` must be a Slack subdomain (`[a-z0-9-]`, 1–63 bytes, no leading or trailing `-`): a hand-written field must not be able to send the cookie to another host. A field without a cookie, with a bad domain, or whose mint or `auth.test` fails is skipped with a warning naming the field (never a value); the other workspaces still load.
+Before any cookie is sent, the field's `domain` must be its own field name and a Slack domain: one label (`[a-z0-9-]`, 1–63 bytes, no leading or trailing `-`), optionally followed by `.enterprise` for an Enterprise Grid organisation (`<org>.enterprise.slack.com`). A hand-written field must not be able to send the cookie to another host.
+
+The fields may be written by dotvault's `slack` engine or by hand (one field at a time with `dotvault kv patch --force <secret> <domain>=-`, the JSON on stdin; `kv put` would replace the whole secret): slk cannot tell the two apart and does not need to, so its advice covers both. A field without a cookie, with a bad domain, or whose mint or `auth.test` fails is skipped with a warning naming the field (never a value); the other workspaces still load.
 
 ## Configuration
 
@@ -44,8 +46,8 @@ Failures do not stop slk from starting with the workspaces it does have. Each is
 | No usable token (`ErrLoginRequired`) | run `dotvault login` |
 | Vault unreachable | Vault is unreachable; using the other workspaces |
 | Denied | the token cannot read `<secret>` |
-| Secret absent | nothing enrolled at `<secret>`; run `dotvault enrol <secret>` |
-| Some workspaces unusable | could not use `<field>: <reason>`; the rest load (as a toast) |
+| Secret absent / no workspaces in it | add a field per workspace, by `dotvault enrol <secret>` or by writing `{"domain":"<domain>","cookie":"xoxd-…"}` yourself |
+| Some workspaces unusable | could not use `<field>: <reason>`; the rest load (as a toast); with none usable, how to replace a session either way |
 
 When `[vault] secret` is set, slk does not launch the first-run onboarding because the Vault read came up empty: onboarding writes a token file, which is what the user moved away from. It exits with the message instead. Without `[vault]`, startup is unchanged.
 

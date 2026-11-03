@@ -119,7 +119,7 @@ func vaultCredentialToken(ctx context.Context, c vaultCredential, m vaultMinter)
 	}
 	// The domain becomes the host the cookie is sent to, and the field may
 	// have been written by hand.
-	if err := validSlackSubdomain(c.Domain); err != nil {
+	if err := validSlackDomain(c.Domain); err != nil {
 		return slackclient.Token{}, fmt.Errorf("domain %q: %w", c.Domain, err)
 	}
 	token, err := m.mint(ctx, c.Domain, c.Cookie)
@@ -146,20 +146,39 @@ func vaultCredentialToken(ctx context.Context, c vaultCredential, m vaultMinter)
 	}, nil
 }
 
-// validSlackSubdomain is Slack's workspace URL rule: a-z, 0-9 and '-', 1-63
-// bytes, no leading or trailing '-'. Being one DNS label is what makes it safe
-// to put in front of .slack.com.
-func validSlackSubdomain(s string) error {
-	if s == "" || len(s) > 63 || s[0] == '-' || s[len(s)-1] == '-' {
-		return errors.New("not a Slack subdomain")
+// validSlackDomain accepts what goes in front of .slack.com: a workspace
+// subdomain (acme), or an Enterprise Grid one (acme.enterprise). A label is
+// a-z, 0-9 and '-', 1-63 bytes, no leading or trailing '-'. Allowing exactly
+// one label, optionally followed by ".enterprise", is what makes it safe to put
+// in front of .slack.com: the cookie can only go to a Slack host.
+func validSlackDomain(s string) error {
+	label := strings.TrimSuffix(s, ".enterprise")
+	if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		return errors.New("not a Slack domain (acme, or acme.enterprise for Enterprise Grid)")
 	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+	for i := 0; i < len(label); i++ {
+		c := label[i]
 		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-			return errors.New("not a Slack subdomain")
+			return errors.New("not a Slack domain (acme, or acme.enterprise for Enterprise Grid)")
 		}
 	}
 	return nil
+}
+
+// vaultFieldHint says how a workspace gets into the secret, covering both
+// ways it can be kept: enrolled by dotvault's slack engine, or written by
+// hand as JSON.
+func vaultFieldHint(secret string) string {
+	return "add a field per workspace to " + secret + ", named by its domain (acme, or acme.enterprise for Enterprise Grid), " +
+		"by enrolling with `dotvault enrol " + secret + "` or by writing it yourself as " +
+		`{"domain":"<domain>","cookie":"xoxd-…"}` + " (`dotvault kv patch --force " + secret + " <domain>=-` with the JSON on stdin)"
+}
+
+// vaultReplaceHint says how to replace a session Slack no longer accepts,
+// whichever way the field is kept.
+func vaultReplaceHint(secret string) string {
+	return "to replace a session, enrol again with `dotvault enrol " + secret +
+		"` or update the field's cookie in " + secret + " by hand (`dotvault kv patch --force " + secret + " <domain>=-`)"
 }
 
 // mergeVaultTokens puts the Vault tokens in place of any token file for the
@@ -190,7 +209,7 @@ func vaultErrorText(secret string, err error) string {
 	case errors.Is(err, dotvault.ErrDenied):
 		return "your Vault token cannot read " + secret
 	case errors.Is(err, errVaultNoSecret):
-		return "nothing is enrolled at " + secret + "; run `dotvault enrol " + secret + "`"
+		return "nothing at " + secret + "; " + vaultFieldHint(secret)
 	}
 	return strings.TrimSpace(err.Error())
 }
@@ -217,12 +236,12 @@ func vaultTokens(ctx context.Context, cfg config.Vault, connect func(context.Con
 		}
 		msg := "could not use " + strings.Join(warnings, "; ")
 		if len(toks) == 0 {
-			msg += "; run `dotvault enrol " + cfg.Secret + "` to sign in again"
+			msg += "; " + vaultReplaceHint(cfg.Secret)
 		}
 		return toks, msg
 	}
 	if len(toks) == 0 {
-		return nil, "no Slack workspaces in " + cfg.Secret + "; run `dotvault enrol " + cfg.Secret + "`"
+		return nil, "no Slack workspaces in " + cfg.Secret + "; " + vaultFieldHint(cfg.Secret)
 	}
 	return toks, ""
 }

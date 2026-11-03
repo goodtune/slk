@@ -126,6 +126,34 @@ func TestLoadVaultTokensSkipsUnusableFields(t *testing.T) {
 	}
 }
 
+func TestLoadVaultTokensAcceptsEnterpriseGrid(t *testing.T) {
+	r := &fakeVaultReader{found: true, fields: map[string]string{
+		"company.enterprise": `{"domain":"company.enterprise","cookie":"xoxd-g"}`,
+	}}
+	fm := &fakeMinter{}
+	toks, warnings, err := loadVaultTokens(context.Background(), r, "slack/slk", fm.minter())
+	if err != nil || len(warnings) != 0 || len(toks) != 1 {
+		t.Fatalf("tokens = %+v warnings = %v err = %v", toks, warnings, err)
+	}
+	if toks[0].Domain != "company.enterprise" || strings.Join(fm.minted, ",") != "company.enterprise/xoxd-g" {
+		t.Errorf("token = %+v minted = %v", toks[0], fm.minted)
+	}
+}
+
+func TestValidSlackDomain(t *testing.T) {
+	for _, ok := range []string{"acme", "acme-eng", "a1", "company.enterprise"} {
+		if err := validSlackDomain(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "Acme", "-acme", "acme-", ".enterprise", "a.b", "a.b.enterprise",
+		"acme.enterprise.slack.com", "evil.example/?", "enterprise.enterprise.x"} {
+		if validSlackDomain(bad) == nil {
+			t.Errorf("%q: want an error", bad)
+		}
+	}
+}
+
 func TestLoadVaultTokensRefusesAMismatchedSession(t *testing.T) {
 	r := &fakeVaultReader{found: true, fields: map[string]string{"acme": `{"domain":"acme","cookie":"xoxd-a"}`}}
 	m := vaultMinter{
@@ -169,7 +197,7 @@ func TestVaultTokensMessages(t *testing.T) {
 		{"login", connect(fmt.Errorf("x: %w", dotvault.ErrLoginRequired), nil), "dotvault login"},
 		{"unreachable", connect(fmt.Errorf("x: %w", dotvault.ErrUnreachable), nil), "unreachable"},
 		{"denied", connect(nil, &fakeVaultReader{err: fmt.Errorf("x: %w", dotvault.ErrDenied)}), "cannot read slack/slk"},
-		{"absent", connect(nil, &fakeVaultReader{}), "dotvault enrol slack/slk"},
+		{"absent", connect(nil, &fakeVaultReader{}), `dotvault enrol slack/slk` + "` or by writing it yourself as " + `{"domain":"<domain>","cookie":"xoxd-…"}`},
 		{"empty", connect(nil, &fakeVaultReader{found: true, fields: map[string]string{"issued_at": "x"}}), "no Slack workspaces"},
 	}
 	for _, c := range cases {
@@ -201,7 +229,7 @@ func TestVaultTokensPartialFailureStillLoads(t *testing.T) {
 	}
 	r.fields = map[string]string{"failing": `{"domain":"failing","cookie":"xoxd-f"}`}
 	toks, msg = vaultTokens(context.Background(), config.Vault{Secret: "slack/slk"}, connect, (&fakeMinter{failDomain: "failing"}).minter())
-	if toks != nil || !strings.Contains(msg, "dotvault enrol slack/slk") {
+	if toks != nil || !strings.Contains(msg, "dotvault enrol slack/slk") || !strings.Contains(msg, "by hand") {
 		t.Errorf("all failing: tokens = %+v msg = %q", toks, msg)
 	}
 }

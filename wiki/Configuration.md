@@ -374,7 +374,15 @@ secret = "slack/slk"     # path under kv/users/<you>/
 
 Enrol the sessions with dotvault's `slack` engine (one field per workspace, see dotvault's `docs/services/slack.md`), then start slk. Vault's address, your login and the KV layout all come from dotvault's configuration. slk uses your existing Vault token (the token file, `DOTVAULT_TOKEN`, or the dotvault daemon's socket) and never prompts. If there is no usable token it says to run `dotvault login`.
 
-dotvault stores only each workspace's `d` cookie, as `{"domain": "acme", "cookie": "xoxd-…"}`. slk mints the access token from it every time it starts and looks up the team with `auth.test`. A field it can't use (no cookie, a bad domain, a cookie Slack no longer accepts) is skipped with a warning, and the other workspaces still load; re-enrol with `dotvault enrol slack/slk` to replace a signed-out session.
+Each workspace is one field of the secret, named by its domain, holding `{"domain": "acme", "cookie": "xoxd-…"}` and nothing else. For an Enterprise Grid organisation the domain is `<org>.enterprise` (as in `<org>.enterprise.slack.com`). dotvault's `slack` engine writes these fields (`dotvault enrol slack/slk`), or you can write them yourself; slk reads either the same way. Patch one field at a time so the other workspaces stay, with the value on stdin so the cookie isn't on the command line:
+
+```sh
+echo '{"domain":"acme.enterprise","cookie":"xoxd-…"}' | dotvault kv patch --force slack/slk acme.enterprise=-
+```
+
+(`dotvault kv put` would replace the whole secret.) slk mints the access token from the cookie every time it starts and looks up the team with `auth.test`.
+
+A field it can't use (no cookie, a domain that isn't a Slack domain or isn't the field's own name, a cookie Slack no longer accepts) is skipped with a warning, and the other workspaces still load. To replace a signed-out session, enrol again or update the field's cookie by hand.
 
 Cookies read from Vault, and the tokens slk mints from them, are kept in memory only and never written to disk. A workspace in Vault replaces a token file for the same workspace; the file itself is left alone. If Vault can't be read and you have no other workspaces, slk exits and says why; if you do, it starts with those and shows the reason as a toast. slk reads Vault at startup.
 
