@@ -30,9 +30,9 @@ func (f *fakeVaultReader) ReadUserSecretFields(_ context.Context, service string
 // dotvault's client must satisfy the interface slk depends on.
 var _ vaultTokenReader = (*dotvault.Client)(nil)
 
-func credJSON(domain, team string) string {
-	return fmt.Sprintf(`{"domain":%q,"team_id":%q,"team_name":"Name %s","user_id":"U1","access_token":"xoxc-%s","cookie":"xoxd-c"}`,
-		domain, team, domain, domain)
+// credJSON is a workspace field as dotvault's slack engine writes it.
+func credJSON(domain string) string {
+	return fmt.Sprintf(`{"domain":%q,"cookie":"xoxd-%s"}`, domain, domain)
 }
 
 // fakeMinter mints xoxc-minted-<domain> and identifies any token as team
@@ -59,13 +59,13 @@ func (f *fakeMinter) minter() vaultMinter {
 	}
 }
 
-func TestLoadVaultTokensUsesDotvaultsToken(t *testing.T) {
+func TestLoadVaultTokensMintsEveryWorkspace(t *testing.T) {
 	r := &fakeVaultReader{found: true, fields: map[string]string{
-		"acme":       credJSON("acme", "T1"),
-		"beta":       credJSON("beta", "T2"),
-		"issued_at":  "2026-11-03T12:00:00Z",
-		"expires_at": "2026-11-04T12:00:00Z",
-		"note":       "hand-written",
+		"acme": credJSON("acme"),
+		"beta": credJSON("beta"),
+		"note": "hand-written",
+		// A token in the field is not used: slk always mints its own.
+		"gamma": `{"domain":"gamma","cookie":"xoxd-gamma","access_token":"xoxc-stale","team_id":"T-stale"}`,
 	}}
 	fm := &fakeMinter{}
 	toks, warnings, err := loadVaultTokens(context.Background(), r, "slack/slk", fm.minter())
@@ -75,55 +75,31 @@ func TestLoadVaultTokensUsesDotvaultsToken(t *testing.T) {
 	if r.asked != "slack/slk" {
 		t.Errorf("asked for %q", r.asked)
 	}
-	if len(toks) != 2 {
-		t.Fatalf("tokens = %+v, want acme and beta only", toks)
+	if len(toks) != 3 {
+		t.Fatalf("tokens = %+v, want acme, beta and gamma", toks)
 	}
-	want := slackclient.Token{AccessToken: "xoxc-acme", Cookie: "xoxd-c", Domain: "acme", TeamID: "T1",
-		TeamName: "Name acme", Source: slackclient.TokenSourceVault}
+	want := slackclient.Token{AccessToken: "xoxc-minted-acme", Cookie: "xoxd-acme", Domain: "acme", TeamID: "T-acme",
+		TeamName: "Team acme", Source: slackclient.TokenSourceVault}
 	if toks[0] != want {
 		t.Errorf("acme = %+v, want %+v", toks[0], want)
 	}
-	if len(fm.minted) != 0 || len(fm.identified) != 0 {
-		t.Errorf("a field with an access_token is dotvault's: nothing may be minted (%v) or identified (%v)", fm.minted, fm.identified)
+	if toks[2].AccessToken != "xoxc-minted-gamma" || toks[2].TeamID != "T-gamma" {
+		t.Errorf("gamma = %+v: a stored token or team must not be used", toks[2])
 	}
-}
-
-func TestLoadVaultTokensMintsWhenNoAccessToken(t *testing.T) {
-	r := &fakeVaultReader{found: true, fields: map[string]string{
-		// Cookie only: slk mints and identifies.
-		"acme": `{"domain":"acme","cookie":"xoxd-a"}`,
-		// Cookie and team, no token: slk mints, the team is already known.
-		"beta": `{"domain":"beta","cookie":"xoxd-b","team_id":"T2","team_name":"Beta"}`,
-	}}
-	fm := &fakeMinter{}
-	toks, warnings, err := loadVaultTokens(context.Background(), r, "slack/slk", fm.minter())
-	if err != nil || len(warnings) != 0 {
-		t.Fatal(err, warnings)
-	}
-	if len(toks) != 2 {
-		t.Fatalf("tokens = %+v", toks)
-	}
-	acme := slackclient.Token{AccessToken: "xoxc-minted-acme", Cookie: "xoxd-a", Domain: "acme", TeamID: "T-acme",
-		TeamName: "Team acme", Source: slackclient.TokenSourceVault}
-	if toks[0] != acme {
-		t.Errorf("acme = %+v, want %+v", toks[0], acme)
-	}
-	if toks[1].AccessToken != "xoxc-minted-beta" || toks[1].TeamID != "T2" || toks[1].TeamName != "Beta" {
-		t.Errorf("beta = %+v", toks[1])
-	}
-	if strings.Join(fm.minted, ",") != "acme/xoxd-a,beta/xoxd-b" {
+	if strings.Join(fm.minted, ",") != "acme/xoxd-acme,beta/xoxd-beta,gamma/xoxd-gamma" {
 		t.Errorf("minted = %v", fm.minted)
 	}
-	if strings.Join(fm.identified, ",") != "xoxc-minted-acme" {
-		t.Errorf("identified = %v, want acme only (beta's team is in the field)", fm.identified)
+	if len(fm.identified) != 3 {
+		t.Errorf("identified = %v, want every workspace", fm.identified)
 	}
 }
 
 func TestLoadVaultTokensSkipsUnusableFields(t *testing.T) {
 	r := &fakeVaultReader{found: true, fields: map[string]string{
-		"acme":    credJSON("acme", "T1"),
-		"nocook":  `{"domain":"nocook","access_token":"xoxc-x","team_id":"T9"}`,
+		"acme":    credJSON("acme"),
+		"nocook":  `{"domain":"nocook"}`,
 		"evil":    `{"domain":"evil.example/?","cookie":"xoxd-e"}`,
+		"other":   `{"domain":"acme","cookie":"xoxd-o"}`,
 		"failing": `{"domain":"failing","cookie":"xoxd-f"}`,
 	}}
 	fm := &fakeMinter{failDomain: "failing"}
@@ -131,11 +107,11 @@ func TestLoadVaultTokensSkipsUnusableFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(toks) != 1 || toks[0].TeamID != "T1" {
+	if len(toks) != 1 || toks[0].TeamID != "T-acme" {
 		t.Errorf("tokens = %+v, want acme only", toks)
 	}
 	got := strings.Join(warnings, " | ")
-	for _, want := range []string{"nocook: no cookie", "evil: domain", "failing: mint a token from the cookie"} {
+	for _, want := range []string{"nocook: no cookie", "evil: domain", "other: domain \"acme\" is not the field's own name", "failing: mint a token from the cookie"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("warnings %q lack %q", got, want)
 		}
@@ -215,7 +191,7 @@ func TestVaultTokensMessages(t *testing.T) {
 
 func TestVaultTokensPartialFailureStillLoads(t *testing.T) {
 	r := &fakeVaultReader{found: true, fields: map[string]string{
-		"acme":    credJSON("acme", "T1"),
+		"acme":    credJSON("acme"),
 		"failing": `{"domain":"failing","cookie":"xoxd-f"}`,
 	}}
 	connect := func(context.Context, config.Vault) (vaultTokenReader, error) { return r, nil }

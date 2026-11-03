@@ -16,16 +16,13 @@ import (
 )
 
 // vaultCredential is one workspace field of the secret dotvault's slack
-// engine writes. The field names are the contract with dotvault
-// (dotvault docs/services/slack.md); slk imports dotvault's client and
-// nothing else of it, and dotvault imports nothing of slk's.
+// engine writes: the subdomain and the session's d cookie, nothing else. The
+// field names are the contract with dotvault (dotvault docs/services/slack.md);
+// slk imports dotvault's client and nothing else of it, and dotvault imports
+// nothing of slk's.
 type vaultCredential struct {
-	Domain      string `json:"domain"`
-	TeamID      string `json:"team_id"`
-	TeamName    string `json:"team_name"`
-	UserID      string `json:"user_id"`
-	AccessToken string `json:"access_token"`
-	Cookie      string `json:"cookie"`
+	Domain string `json:"domain"`
+	Cookie string `json:"cookie"`
 }
 
 // errVaultNoSecret is a configured secret with nothing at its path.
@@ -60,9 +57,9 @@ func connectVault(ctx context.Context, cfg config.Vault) (vaultTokenReader, erro
 	return cli, nil
 }
 
-// vaultMinter is how slk signs in to a workspace whose Vault field carries no
-// access_token: mint an xoxc from the d cookie, then auth.test it for the
-// team. MintToken and authBrowserSession in production; faked in tests.
+// vaultMinter is how slk signs in to a workspace from its Vault field: mint an
+// xoxc from the d cookie, then auth.test it for the team. MintToken and
+// authBrowserSession in production; faked in tests.
 type vaultMinter struct {
 	mint     func(ctx context.Context, domain, cookie string) (string, error)
 	identify func(token, cookie string) (slackclient.Token, error)
@@ -70,17 +67,15 @@ type vaultMinter struct {
 
 var defaultVaultMinter = vaultMinter{mint: slackclient.MintToken, identify: authBrowserSession}
 
-// loadVaultTokens reads every workspace credential in secret. Who keeps the
-// access token is decided per field by its presence: with an access_token,
-// dotvault manages it (its slack engine re-mints it) and slk uses it as is;
-// without one, slk mints it from the cookie itself, here, in memory. Either
-// way a field missing its team ID is identified with auth.test.
+// loadVaultTokens reads every workspace credential in secret and signs in to
+// each: dotvault carries only the d cookie, so slk always mints the access
+// token itself, here, in memory, and learns the team from auth.test.
 //
-// A field that is not a credential (issued_at, or something written by hand)
-// is skipped silently. One that is but cannot be used (no cookie, a domain
-// that is not a Slack subdomain, a mint or auth.test that fails) is skipped
-// with a warning naming the field, never its value; the other workspaces
-// still load. The tokens are marked TokenSourceVault: memory only.
+// A field that is not a credential (something written by hand) is skipped
+// silently. One that is but cannot be used (no cookie, a domain that is not a
+// Slack subdomain, a mint or auth.test that fails) is skipped with a warning
+// naming the field, never its value; the other workspaces still load. The
+// tokens are marked TokenSourceVault: memory only.
 func loadVaultTokens(ctx context.Context, r vaultTokenReader, secret string, m vaultMinter) ([]slackclient.Token, []string, error) {
 	fields, found, err := r.ReadUserSecretFields(ctx, secret)
 	if err != nil {
@@ -101,6 +96,12 @@ func loadVaultTokens(ctx context.Context, r vaultTokenReader, secret string, m v
 		if json.Unmarshal([]byte(fields[name]), &c) != nil || c.Domain == "" {
 			continue
 		}
+		// The field is named by its workspace; a domain that differs is
+		// an edited or confused secret, not a second workspace.
+		if c.Domain != name {
+			warnings = append(warnings, fmt.Sprintf("%s: domain %q is not the field's own name", name, c.Domain))
+			continue
+		}
 		tok, err := vaultCredentialToken(ctx, c, m)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", name, err))
@@ -111,8 +112,7 @@ func loadVaultTokens(ctx context.Context, r vaultTokenReader, secret string, m v
 	return out, warnings, nil
 }
 
-// vaultCredentialToken turns one workspace field into a token, minting and
-// identifying as the field requires.
+// vaultCredentialToken mints and identifies one workspace from its field.
 func vaultCredentialToken(ctx context.Context, c vaultCredential, m vaultMinter) (slackclient.Token, error) {
 	if c.Cookie == "" {
 		return slackclient.Token{}, errors.New("no cookie")
@@ -122,32 +122,28 @@ func vaultCredentialToken(ctx context.Context, c vaultCredential, m vaultMinter)
 	if err := validSlackSubdomain(c.Domain); err != nil {
 		return slackclient.Token{}, fmt.Errorf("domain %q: %w", c.Domain, err)
 	}
-	tok := slackclient.Token{
-		AccessToken: c.AccessToken,
+	token, err := m.mint(ctx, c.Domain, c.Cookie)
+	if err != nil {
+		return slackclient.Token{}, fmt.Errorf("mint a token from the cookie: %w", err)
+	}
+	who, err := m.identify(token, c.Cookie)
+	if err != nil {
+		return slackclient.Token{}, fmt.Errorf("auth.test: %w", err)
+	}
+	if who.Domain != "" && who.Domain != c.Domain {
+		return slackclient.Token{}, fmt.Errorf("the session is for %s.slack.com, not %s.slack.com", who.Domain, c.Domain)
+	}
+	if who.TeamID == "" {
+		return slackclient.Token{}, errors.New("auth.test named no team")
+	}
+	return slackclient.Token{
+		AccessToken: token,
 		Cookie:      c.Cookie,
 		Domain:      c.Domain,
-		TeamID:      c.TeamID,
-		TeamName:    c.TeamName,
+		TeamID:      who.TeamID,
+		TeamName:    who.TeamName,
 		Source:      slackclient.TokenSourceVault,
-	}
-	if tok.AccessToken == "" {
-		minted, err := m.mint(ctx, c.Domain, c.Cookie)
-		if err != nil {
-			return slackclient.Token{}, fmt.Errorf("mint a token from the cookie: %w", err)
-		}
-		tok.AccessToken = minted
-	}
-	if tok.TeamID == "" {
-		who, err := m.identify(tok.AccessToken, tok.Cookie)
-		if err != nil {
-			return slackclient.Token{}, fmt.Errorf("auth.test: %w", err)
-		}
-		tok.TeamID, tok.TeamName = who.TeamID, who.TeamName
-		if who.Domain != "" && who.Domain != c.Domain {
-			return slackclient.Token{}, fmt.Errorf("the session is for %s.slack.com, not %s.slack.com", who.Domain, c.Domain)
-		}
-	}
-	return tok, nil
+	}, nil
 }
 
 // validSlackSubdomain is Slack's workspace URL rule: a-z, 0-9 and '-', 1-63
