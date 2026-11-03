@@ -42,6 +42,7 @@ import (
 	"github.com/gammons/slk/internal/ui/sidebar"
 	"github.com/gammons/slk/internal/ui/statusbar"
 	"github.com/gammons/slk/internal/ui/styles"
+	"github.com/gammons/slk/internal/ui/suppresslist"
 	"github.com/gammons/slk/internal/ui/themeswitcher"
 	"github.com/gammons/slk/internal/ui/thread"
 	"github.com/gammons/slk/internal/ui/threadsview"
@@ -623,7 +624,11 @@ type App struct {
 	sidebarResizeFrom  int
 
 	// settings persists the theme choice and sidebar width. Nil until wired.
-	settings       core.SettingsService
+	settings core.SettingsService
+	// suppression holds the rules hiding authors' messages (suppress.go).
+	suppression core.SuppressionService
+	// suppressList is the :suppressed dialog.
+	suppressList   suppresslist.Model
 	themeOverrides core.Theme
 	// pendingTheme is the theme a cycle (alt+y / alt+shift+y) applied
 	// but has not saved yet, with its workspace. themeSaveGen counts
@@ -962,6 +967,8 @@ func NewApp() *App {
 		navHistory:            newNavHistoryStore(),
 		marks:                 newMarksStore(),
 		marksOverlay:          marks.New(),
+		suppression:           noopSuppressionService,
+		suppressList:          suppresslist.New(),
 		showJumpOverlay:       true,
 		clipboardWrite:        defaultClipboardWriter,
 		userProfile:           userprofile.New(),
@@ -975,6 +982,8 @@ func NewApp() *App {
 	rootModel := messages.New(nil, "")
 	app.winModels = map[wintree.LeafID]*messages.Model{rootWin: rootModel}
 	app.messagepane = app.winModels[rootWin]
+	app.installChannelHide(rootModel)
+	app.installThreadHide()
 	app.editing = newEditController()
 	// typing tracker is referenced by typingOut so it must exist first;
 	// construct outside the literal because struct literals can't
@@ -1107,6 +1116,7 @@ func (a *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		reduceFocus,
 		reduceSend,
 		reduceRemovePreview,
+		reduceSuppress,
 		reduceActionPrompt,
 		reduceSlashCommand,
 		reduceChannels,
@@ -2239,6 +2249,9 @@ func (a *App) SetMode(mode Mode) {
 	// would stay drawn over the screen, and over the quit prompt.
 	if a.mode == ModeMarks && mode != ModeMarks {
 		a.marksOverlay.Close()
+	}
+	if a.mode == ModeSuppressed && mode != ModeSuppressed {
+		a.suppressList.Close()
 	}
 	a.mode = mode
 	a.statusbar.SetMode(mode)
