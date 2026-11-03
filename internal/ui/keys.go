@@ -74,6 +74,8 @@ type KeyMap struct {
 	ListReactions       key.Binding
 	UserProfile         key.Binding
 	Huddle              key.Binding
+	Suppress            key.Binding
+	Suppressed          key.Binding
 	WindowPrefix        key.Binding
 	WinSplit            key.Binding
 	WinVSplit           key.Binding
@@ -171,6 +173,9 @@ func DefaultKeyMap() KeyMap {
 		ListReactions:  key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "list reactions")),
 		UserProfile:    key.NewBinding(key.WithKeys("K"), key.WithHelp("K", "show author's profile")),
 		Huddle:         key.NewBinding(key.WithKeys("H"), key.WithHelp("H / :huddle", "copy huddle link")),
+		// Keyless, like MarksList: dispatched from the command registry.
+		Suppress:   key.NewBinding(key.WithHelp(":suppress", "hide this author's messages")),
+		Suppressed: key.NewBinding(key.WithHelp(":suppressed", "list hidden authors")),
 		// Window commands (design §4). WindowPrefix is the only real
 		// binding; the Win* entries are keyless help-only bindings
 		// (same trick as WorkspaceFinder above) — actual dispatch of
