@@ -289,13 +289,30 @@ func run() error {
 	// Load tokens
 	tokenDir := filepath.Join(dataDir, "tokens")
 	tokenStore := slackclient.NewTokenStore(tokenDir)
-	tokens, err := tokenStore.List()
-	if err != nil || len(tokens) == 0 {
+	// A token directory that cannot be listed counts as empty, as it always
+	// has; Vault tokens alone are then enough to start.
+	tokens, _ := tokenStore.List()
+	// [vault] secret: sessions dotvault keeps in Vault, held in memory only
+	// (docs/superpowers/specs/2026-11-03-dotvault-credentials-design.md).
+	vaultCtx, vaultCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	vaultToks, vaultMsg := vaultTokens(vaultCtx, cfg.Vault, connectVault)
+	vaultCancel()
+	tokens = mergeVaultTokens(tokens, vaultToks)
+	if vaultMsg != "" {
+		log.Printf("vault %s: %s", cfg.Vault.Secret, vaultMsg)
+		if len(tokens) == 0 {
+			// Onboarding would write a token file, which is what a
+			// [vault] user moved away from: say what to do instead.
+			return fmt.Errorf("vault %s: %s", cfg.Vault.Secret, vaultMsg)
+		}
+	}
+	if len(tokens) == 0 {
 		// No workspaces configured -- launch onboarding automatically
 		if err := addWorkspace(false); err != nil {
 			return err
 		}
 		// Reload tokens after onboarding
+		var err error
 		tokens, err = tokenStore.List()
 		if err != nil || len(tokens) == 0 {
 			return fmt.Errorf("no workspaces configured after onboarding")
@@ -1568,6 +1585,11 @@ func run() error {
 	// a serialized pass-through for non-sixel frames (no marker present)
 	// and the sixel paint site for marked frames.
 	p = tea.NewProgram(app, tea.WithOutput(terminalOutput))
+	if vaultMsg != "" {
+		// slk started on its other workspaces; the Vault ones are missing.
+		msg := "Vault " + cfg.Vault.Secret + ": " + vaultMsg
+		go p.Send(ui.ToastMsg{Text: msg})
+	}
 
 	// A changed thread-unread answer re-runs the rail refresh, which
 	// then reads the new answer from the cache.

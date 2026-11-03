@@ -362,6 +362,20 @@ slk adds a rule by appending a block to the end of the file and removes
 one by deleting its block, leaving everything else as written. A rule
 written another way (an inline table) can only be removed by hand.
 
+## Credentials from Vault (dotvault)
+
+If you run [dotvault](https://github.com/goodtune/dotvault), slk can read your Slack sessions from HashiCorp Vault instead of keeping them in `~/.local/share/slk/tokens/`:
+
+```toml
+[vault]
+secret = "slack/slk"     # path under kv/users/<you>/
+# config = "/etc/xdg/dotvault/config.yaml"   # dotvault's config; dotvault's default when unset
+```
+
+Enrol the sessions with dotvault's `slack` engine (one field per workspace, see dotvault's `docs/services/slack.md`), then start slk. Vault's address, your login and the KV layout all come from dotvault's configuration. slk uses your existing Vault token (the token file, `DOTVAULT_TOKEN`, or the dotvault daemon's socket) and never prompts. If there is no usable token it says to run `dotvault login`.
+
+Sessions read from Vault are kept in memory only and never written to disk. A workspace in Vault replaces a token file for the same workspace; the file itself is left alone. If Vault can't be read and you have no other workspaces, slk exits and says why; if you do, it starts with those and shows the reason as a toast. dotvault keeps the Vault copy fresh; slk reads it at startup.
+
 ## Data paths (XDG)
 
 | Path | Contents |
