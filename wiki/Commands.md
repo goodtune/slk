@@ -26,6 +26,8 @@ the status bar beside the prompt, with the current one highlighted.
 | `:huddle` | `H` | Copy the huddle link of the conversation on screen. With the thread pane focused it's the thread's channel; in the Threads or Activity view, the highlighted row's |
 | `:marks` | `'` (unless `[marks] show_jump_overlay` is off) | List every mark in the workspace with its channel and a preview of the message. `:marks` always shows the list, whatever `show_jump_overlay` says |
 | `:delmarks abc` | `Backspace` on a row in `:marks` | Delete marks by letter. `:delmarks a b c` works too; letters with no mark are ignored |
+| `:suppress` | | Hide the selected message's author: only in this conversation, or everywhere in the workspace. Their messages stop showing (thread replies too), notifying and marking channels unread. Saved to `config.toml`; see [Hiding authors](Configuration#hiding-authors) |
+| `:suppressed` | | List the authors hidden in this workspace. `Backspace` on a row stops hiding them, and their messages come back |
 | `:sp` | `Ctrl+w s` | Split the focused window, one above the other |
 | `:vsp` | `Ctrl+w v` | Split the focused window side by side |
 | `:q` | `Ctrl+w q` | Close the focused window. This never quits slk: on the last window it says "Cannot close last window" |
