@@ -295,7 +295,7 @@ func run() error {
 	// [vault] secret: sessions dotvault keeps in Vault, held in memory only
 	// (docs/superpowers/specs/2026-11-03-dotvault-credentials-design.md).
 	vaultCtx, vaultCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	vaultToks, vaultMsg := vaultTokens(vaultCtx, cfg.Vault, connectVault)
+	vaultToks, vaultMsg := vaultTokens(vaultCtx, cfg.Vault, connectVault, defaultVaultMinter)
 	vaultCancel()
 	tokens = mergeVaultTokens(tokens, vaultToks)
 	if vaultMsg != "" {

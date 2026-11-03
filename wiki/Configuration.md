@@ -374,7 +374,9 @@ secret = "slack/slk"     # path under kv/users/<you>/
 
 Enrol the sessions with dotvault's `slack` engine (one field per workspace, see dotvault's `docs/services/slack.md`), then start slk. Vault's address, your login and the KV layout all come from dotvault's configuration. slk uses your existing Vault token (the token file, `DOTVAULT_TOKEN`, or the dotvault daemon's socket) and never prompts. If there is no usable token it says to run `dotvault login`.
 
-Sessions read from Vault are kept in memory only and never written to disk. A workspace in Vault replaces a token file for the same workspace; the file itself is left alone. If Vault can't be read and you have no other workspaces, slk exits and says why; if you do, it starts with those and shows the reason as a toast. dotvault keeps the Vault copy fresh; slk reads it at startup.
+Each workspace in the secret is either managed by dotvault (its field carries an `access_token`, which dotvault keeps fresh and slk uses as is) or cookie-only (no `access_token`; slk mints one from the `d` cookie at startup). A field needs only `domain` and `cookie`, e.g. `{"domain": "acme", "cookie": "xoxd-…"}`: slk looks up the team with `auth.test` when `team_id` is missing. A field it can't use is skipped with a warning, and the other workspaces still load.
+
+Sessions read from Vault, and tokens slk mints from them, are kept in memory only and never written to disk. A workspace in Vault replaces a token file for the same workspace; the file itself is left alone. If Vault can't be read and you have no other workspaces, slk exits and says why; if you do, it starts with those and shows the reason as a toast. slk reads Vault at startup.
 
 ## Data paths (XDG)
 

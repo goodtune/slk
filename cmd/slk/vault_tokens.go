@@ -60,17 +60,34 @@ func connectVault(ctx context.Context, cfg config.Vault) (vaultTokenReader, erro
 	return cli, nil
 }
 
-// loadVaultTokens reads every workspace credential in secret. A field that is
-// not a credential (issued_at, or something written by hand) is skipped; one
-// that is but lacks what slk needs is skipped with a warning naming the field,
-// never its value. The tokens are marked TokenSourceVault: memory only.
-func loadVaultTokens(ctx context.Context, r vaultTokenReader, secret string) ([]slackclient.Token, error) {
+// vaultMinter is how slk signs in to a workspace whose Vault field carries no
+// access_token: mint an xoxc from the d cookie, then auth.test it for the
+// team. MintToken and authBrowserSession in production; faked in tests.
+type vaultMinter struct {
+	mint     func(ctx context.Context, domain, cookie string) (string, error)
+	identify func(token, cookie string) (slackclient.Token, error)
+}
+
+var defaultVaultMinter = vaultMinter{mint: slackclient.MintToken, identify: authBrowserSession}
+
+// loadVaultTokens reads every workspace credential in secret. Who keeps the
+// access token is decided per field by its presence: with an access_token,
+// dotvault manages it (its slack engine re-mints it) and slk uses it as is;
+// without one, slk mints it from the cookie itself, here, in memory. Either
+// way a field missing its team ID is identified with auth.test.
+//
+// A field that is not a credential (issued_at, or something written by hand)
+// is skipped silently. One that is but cannot be used (no cookie, a domain
+// that is not a Slack subdomain, a mint or auth.test that fails) is skipped
+// with a warning naming the field, never its value; the other workspaces
+// still load. The tokens are marked TokenSourceVault: memory only.
+func loadVaultTokens(ctx context.Context, r vaultTokenReader, secret string, m vaultMinter) ([]slackclient.Token, []string, error) {
 	fields, found, err := r.ReadUserSecretFields(ctx, secret)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !found {
-		return nil, errVaultNoSecret
+		return nil, nil, errVaultNoSecret
 	}
 	names := make([]string, 0, len(fields))
 	for name := range fields {
@@ -78,25 +95,75 @@ func loadVaultTokens(ctx context.Context, r vaultTokenReader, secret string) ([]
 	}
 	sort.Strings(names)
 	var out []slackclient.Token
+	var warnings []string
 	for _, name := range names {
 		var c vaultCredential
 		if json.Unmarshal([]byte(fields[name]), &c) != nil || c.Domain == "" {
 			continue
 		}
-		if c.AccessToken == "" || c.Cookie == "" || c.TeamID == "" {
-			log.Printf("vault: %s field %q is missing a token, cookie or team ID; skipped", secret, name)
+		tok, err := vaultCredentialToken(ctx, c, m)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
-		out = append(out, slackclient.Token{
-			AccessToken: c.AccessToken,
-			Cookie:      c.Cookie,
-			Domain:      c.Domain,
-			TeamID:      c.TeamID,
-			TeamName:    c.TeamName,
-			Source:      slackclient.TokenSourceVault,
-		})
+		out = append(out, tok)
 	}
-	return out, nil
+	return out, warnings, nil
+}
+
+// vaultCredentialToken turns one workspace field into a token, minting and
+// identifying as the field requires.
+func vaultCredentialToken(ctx context.Context, c vaultCredential, m vaultMinter) (slackclient.Token, error) {
+	if c.Cookie == "" {
+		return slackclient.Token{}, errors.New("no cookie")
+	}
+	// The domain becomes the host the cookie is sent to, and the field may
+	// have been written by hand.
+	if err := validSlackSubdomain(c.Domain); err != nil {
+		return slackclient.Token{}, fmt.Errorf("domain %q: %w", c.Domain, err)
+	}
+	tok := slackclient.Token{
+		AccessToken: c.AccessToken,
+		Cookie:      c.Cookie,
+		Domain:      c.Domain,
+		TeamID:      c.TeamID,
+		TeamName:    c.TeamName,
+		Source:      slackclient.TokenSourceVault,
+	}
+	if tok.AccessToken == "" {
+		minted, err := m.mint(ctx, c.Domain, c.Cookie)
+		if err != nil {
+			return slackclient.Token{}, fmt.Errorf("mint a token from the cookie: %w", err)
+		}
+		tok.AccessToken = minted
+	}
+	if tok.TeamID == "" {
+		who, err := m.identify(tok.AccessToken, tok.Cookie)
+		if err != nil {
+			return slackclient.Token{}, fmt.Errorf("auth.test: %w", err)
+		}
+		tok.TeamID, tok.TeamName = who.TeamID, who.TeamName
+		if who.Domain != "" && who.Domain != c.Domain {
+			return slackclient.Token{}, fmt.Errorf("the session is for %s.slack.com, not %s.slack.com", who.Domain, c.Domain)
+		}
+	}
+	return tok, nil
+}
+
+// validSlackSubdomain is Slack's workspace URL rule: a-z, 0-9 and '-', 1-63
+// bytes, no leading or trailing '-'. Being one DNS label is what makes it safe
+// to put in front of .slack.com.
+func validSlackSubdomain(s string) error {
+	if s == "" || len(s) > 63 || s[0] == '-' || s[len(s)-1] == '-' {
+		return errors.New("not a Slack subdomain")
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return errors.New("not a Slack subdomain")
+		}
+	}
+	return nil
 }
 
 // mergeVaultTokens puts the Vault tokens in place of any token file for the
@@ -133,21 +200,33 @@ func vaultErrorText(secret string, err error) string {
 }
 
 // vaultTokens is startup's whole Vault step: nil and no message when [vault]
-// is off; otherwise the tokens read, or a message for stderr saying what went
-// wrong and what to do.
-func vaultTokens(ctx context.Context, cfg config.Vault, connect func(context.Context, config.Vault) (vaultTokenReader, error)) ([]slackclient.Token, string) {
+// is off; otherwise the tokens read, and a message for stderr or a toast
+// saying what went wrong and what to do (also when only some workspaces
+// failed).
+func vaultTokens(ctx context.Context, cfg config.Vault, connect func(context.Context, config.Vault) (vaultTokenReader, error), m vaultMinter) ([]slackclient.Token, string) {
 	if cfg.Secret == "" {
 		return nil, ""
 	}
 	r, err := connect(ctx, cfg)
-	if err == nil {
-		var toks []slackclient.Token
-		if toks, err = loadVaultTokens(ctx, r, cfg.Secret); err == nil {
-			if len(toks) == 0 {
-				return nil, "no Slack workspaces in " + cfg.Secret + "; run `dotvault enrol " + cfg.Secret + "`"
-			}
-			return toks, ""
-		}
+	if err != nil {
+		return nil, vaultErrorText(cfg.Secret, err)
 	}
-	return nil, vaultErrorText(cfg.Secret, err)
+	toks, warnings, err := loadVaultTokens(ctx, r, cfg.Secret, m)
+	if err != nil {
+		return nil, vaultErrorText(cfg.Secret, err)
+	}
+	if len(warnings) > 0 {
+		for _, w := range warnings {
+			log.Printf("vault %s: %s", cfg.Secret, w)
+		}
+		msg := "could not use " + strings.Join(warnings, "; ")
+		if len(toks) == 0 {
+			msg += "; run `dotvault enrol " + cfg.Secret + "` to sign in again"
+		}
+		return toks, msg
+	}
+	if len(toks) == 0 {
+		return nil, "no Slack workspaces in " + cfg.Secret + "; run `dotvault enrol " + cfg.Secret + "`"
+	}
+	return toks, ""
 }
