@@ -79,8 +79,9 @@ func tokenize(s string) (string, []token) {
 	for i < len(s) {
 		// Fast path: skip ahead until we see a candidate byte. Wire-
 		// form tokens all start with '<'; emoji shortcodes start with
-		// ':'. IndexAny returns the earliest of the two.
-		j := strings.IndexAny(s[i:], "<:")
+		// ':'; a bare URL starts with its scheme's first letter.
+		// IndexAny returns the earliest.
+		j := strings.IndexAny(s[i:], "<:hHfF")
 		if j < 0 {
 			b.WriteString(s[i:])
 			break
@@ -90,6 +91,16 @@ func tokenize(s string) (string, []token) {
 
 		matched := false
 		switch s[i] {
+		case 'h', 'H', 'f', 'F':
+			// A bare URL is copied as typed: "see:https://x" is not the
+			// emoji :https:, nor is "https://x/a:b:c" the emoji :b:.
+			if i == 0 || bareURLMayFollow(lastRune(s[:i])) {
+				if n := bareURLLen(s[i:]); n > 0 {
+					b.WriteString(s[i : i+n])
+					i += n
+					matched = true
+				}
+			}
 		case '<':
 			// Try each wire-form pattern at position i.
 			for _, p := range []struct {
@@ -123,7 +134,8 @@ func tokenize(s string) (string, []token) {
 			}
 		case ':':
 			loc := reEmoji.FindStringSubmatchIndex(s[i:])
-			if loc != nil && loc[0] == 0 {
+			// "see:https://x" is text and a URL, not the emoji :https:.
+			if loc != nil && loc[0] == 0 && !strings.HasPrefix(s[i+loc[1]:], "//") {
 				full := s[i : i+loc[1]]
 				tok := token{kind: tokEmoji, id: s[i+loc[2] : i+loc[3]]}
 				table = append(table, tok)

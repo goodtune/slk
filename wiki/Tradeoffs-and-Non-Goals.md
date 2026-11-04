@@ -19,7 +19,8 @@ slk is intentionally not a 1:1 port of the desktop client. Some Slack features a
 ## Markdown caveats
 
 - Editing a message you originally formatted with markdown may flatten the rich_text formatting on Slack clients that prefer blocks. The mrkdwn fallback (`*bold*`, etc.) still renders correctly everywhere.
-- Headings (`# Title`) and blockquotes (`> quote`) are passed through verbatim — Slack has no heading construct and `>` is already valid mrkdwn.
+- Headings (`# Title`) are passed through verbatim — Slack has no heading construct. Blockquotes (`> quote`) go out as Slack quotes, with their formatting and links.
+- A URL typed without markup (`https://…`, `http://localhost:8080`, an IP address) is sent as a link. One without a scheme (`example.com`) is not, except `www.` hosts.
 - Tables, footnotes, task lists, and reference-style links are not translated.
 
 ## Image rendering caveats
