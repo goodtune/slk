@@ -68,7 +68,7 @@ func TestForwardMessageRequests(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := &Client{api: slack.New("xoxc-test", slack.OptionAPIURL(srv.URL+"/"))}
-			postedTS, postedText, err := c.ForwardMessage(context.Background(), "Csource", "123.000456", "Cdestination")
+			postedTS, postedText, err := c.ForwardMessage(context.Background(), "Csource", "123.000456", "", "Cdestination")
 			if tc.wantError == "" {
 				if err != nil {
 					t.Fatalf("ForwardMessage: %v", err)
@@ -121,7 +121,7 @@ func TestForwardMessageContextAndErrors(t *testing.T) {
 						return "", "", cause
 					},
 				}
-				postedTS, postedText, err := (&Client{api: api}).ForwardMessage(ctx, "Csource", "123.000456", "Cdestination")
+				postedTS, postedText, err := (&Client{api: api}).ForwardMessage(ctx, "Csource", "123.000456", "", "Cdestination")
 				if postedTS != "" || postedText != "" {
 					t.Errorf("failed forward result = (%q, %q), want empty values", postedTS, postedText)
 				}
@@ -143,4 +143,52 @@ type forwardContextAPI struct {
 
 func (m *forwardContextAPI) PostMessageContext(ctx context.Context, channelID string, options ...slack.MsgOption) (string, string, error) {
 	return m.post(ctx, channelID, options...)
+}
+
+// Enterprise Grid refuses chat.getPermalink with enterprise_is_restricted
+// where Slack's own client, which builds the link itself, forwards fine.
+// The link is then built from auth.test's URL, with the reply's thread,
+// and posted as usual; any other refusal still fails the forward.
+func TestForwardMessageBuildsPermalinkWhenRestricted(t *testing.T) {
+	const want = "https://acme.enterprise.slack.com/archives/Csource/p1700000050000400?thread_ts=1700000000.000100&cid=Csource"
+	for _, tc := range []struct {
+		name, refusal, teamURL string
+		wantPost               bool
+	}{
+		{"restricted", "enterprise_is_restricted", "https://acme.enterprise.slack.com/", true},
+		{"other refusal", "message_not_found", "https://acme.enterprise.slack.com/", false},
+		{"restricted, no workspace url", "enterprise_is_restricted", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var posted string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/chat.getPermalink":
+					fmt.Fprintf(w, `{"ok":false,"error":%q}`, tc.refusal)
+				case "/chat.postMessage":
+					posted = r.PostForm.Get("text")
+					fmt.Fprint(w, `{"ok":true,"channel":"Cdestination","ts":"1700000099.000100"}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			c := &Client{api: slack.New("xoxc-test", slack.OptionAPIURL(srv.URL+"/")), teamURL: tc.teamURL}
+			_, link, err := c.ForwardMessage(context.Background(), "Csource", "1700000050.000400", "1700000000.000100", "Cdestination")
+			if !tc.wantPost {
+				if err == nil || !strings.Contains(err.Error(), tc.refusal) || posted != "" {
+					t.Errorf("err = %v, posted %q; want the refusal and no post", err, posted)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ForwardMessage: %v", err)
+			}
+			if link != want || posted != want {
+				t.Errorf("link = %q, posted = %q, want %q", link, posted, want)
+			}
+		})
+	}
 }

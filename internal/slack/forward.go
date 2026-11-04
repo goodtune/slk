@@ -11,8 +11,9 @@ import (
 // ForwardMessage posts a permalink with Slack's native message preview rather
 // than copying the body through SendMessage's rich-text conversion. It returns
 // the destination message's actual timestamp and the source permalink on success.
-func (c *Client) ForwardMessage(ctx context.Context, sourceChannelID, ts, destinationChannelID string) (postedTS string, permalink string, err error) {
-	permalink, err = c.GetPermalink(ctx, sourceChannelID, ts)
+// threadTS is the source's thread when it is a reply, as for GetPermalink.
+func (c *Client) ForwardMessage(ctx context.Context, sourceChannelID, ts, threadTS, destinationChannelID string) (postedTS string, permalink string, err error) {
+	permalink, err = c.GetPermalink(ctx, sourceChannelID, ts, threadTS)
 	if err != nil {
 		return "", "", fmt.Errorf("forwarding message: %w", err)
 	}
