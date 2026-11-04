@@ -32,6 +32,11 @@ func remintTokens(
 	out := make([]slackclient.Token, len(tokens))
 	copy(out, tokens)
 	for i := range out {
+		if out[i].Source == slackclient.TokenSourceVault {
+			// Held in memory only and kept fresh by dotvault; saving a
+			// re-minted copy would put the session back on disk.
+			continue
+		}
 		if out[i].Source == slackclient.TokenSourceBrowser {
 			// Signed in from a browser session on purpose. The desktop
 			// app can hold the same workspace under another account, and
