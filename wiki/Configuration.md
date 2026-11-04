@@ -356,6 +356,14 @@ thread with nothing selected); the mark is kept either way. Marks
 are only removed when you remove them, with `:delmarks` or `Backspace`
 in the `:marks` overlay.
 
+## Data paths (XDG)
+
+| Path | Contents |
+|---|---|
+| `~/.config/slk/` | Configuration, custom themes |
+| `~/.local/share/slk/` | SQLite cache, tokens |
+| `~/.cache/slk/` | Avatars, image cache |
+
 ## Credentials from Vault (dotvault)
 
 If you run [dotvault](https://github.com/goodtune/dotvault), slk can read your Slack sessions from HashiCorp Vault instead of keeping them in `~/.local/share/slk/tokens/`:
@@ -379,11 +387,3 @@ echo '{"domain":"acme.enterprise","cookie":"xoxd-…"}' | dotvault kv patch --fo
 A field it can't use (no cookie, a domain that isn't a Slack domain or isn't the field's own name, a cookie Slack no longer accepts) is skipped with a warning, and the other workspaces still load. To replace a signed-out session, enrol again or update the field's cookie by hand.
 
 Cookies read from Vault, and the tokens slk mints from them, are kept in memory only and never written to disk. A workspace in Vault replaces a token file for the same workspace; the file itself is left alone. If Vault can't be read and you have no other workspaces, slk exits and says why; if you do, it starts with those and shows the reason as a toast. slk reads Vault at startup.
-
-## Data paths (XDG)
-
-| Path | Contents |
-|---|---|
-| `~/.config/slk/` | Configuration, custom themes |
-| `~/.local/share/slk/` | SQLite cache, tokens |
-| `~/.cache/slk/` | Avatars, image cache |
