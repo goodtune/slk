@@ -25,6 +25,7 @@ type Config struct {
 	Sections      map[string]SectionDef `toml:"sections"`
 	Theme         Theme                 `toml:"theme"`
 	Workspaces    map[string]Workspace  `toml:"workspaces"`
+	Vault         Vault                 `toml:"vault"`
 }
 
 type Compose struct {
@@ -279,6 +280,17 @@ func (w Workspace) SuppressRules() *core.Suppression {
 		rules = append(rules, core.SuppressRule{AuthorID: r.Author, ChannelID: r.Channel, Note: r.Note})
 	}
 	return core.NewSuppression(rules)
+}
+
+// Vault reads Slack sessions from HashiCorp Vault through dotvault
+// (docs/superpowers/specs/2026-11-03-dotvault-credentials-design.md).
+// Secret is the path under kv/users/<you>/ of the secret dotvault's slack
+// engine writes, one field per workspace; empty turns it off. Config is
+// dotvault's own configuration file, empty for dotvault's default; how to
+// reach and authenticate to Vault all comes from there.
+type Vault struct {
+	Secret string `toml:"secret"`
+	Config string `toml:"config"`
 }
 
 // Theme is defined in internal/core, which the TUI shares.

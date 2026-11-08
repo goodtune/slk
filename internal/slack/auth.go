@@ -28,6 +28,11 @@ type Token struct {
 // desktop app may be signed in to the same workspace as someone else.
 const TokenSourceBrowser = "browser"
 
+// TokenSourceVault marks a token read from Vault through dotvault ([vault]
+// in the config). It lives in memory only: nothing may Save it, which would
+// put the session back on disk, and the startup re-mint leaves it alone.
+const TokenSourceVault = "vault"
+
 // TokenStore persists Slack tokens as JSON files in a directory,
 // one file per workspace ({teamID}.json).
 type TokenStore struct {
