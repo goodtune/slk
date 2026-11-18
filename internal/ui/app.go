@@ -4199,6 +4199,11 @@ func (a *App) finalizeSixelView(v tea.View, placements []imgpkg.SixelPlacement) 
 	} else {
 		stampFrameGuards(v.Content, placements)
 	}
+	if debuglog.Enabled() && len(placements) > 0 {
+		debuglog.ImgRender("sixeldbg view %dx%d threadVisible=%v threadWidth=%d msgEnd=%d threadEnd=%d threadChrome=%d threadHeight=%d placements=%d",
+			a.width, a.height, a.threadVisible, a.computeFrame().ThreadWidth, a.layout.MsgEnd(), a.layout.ThreadEnd(),
+			a.threadPanel.ChromeHeight(), a.layout.PageHeight(PanelThread), len(placements))
+	}
 	id := a.sixelFrames.Publish(imgpkg.SixelFrame{
 		Placements:      placements,
 		EraseSGR:        messages.BgANSI(),

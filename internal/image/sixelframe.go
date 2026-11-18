@@ -223,6 +223,7 @@ func (w *FrameOutput) Write(p []byte) (int, error) {
 		force := frame.Force || (frame.RepaintOnScroll && (moved || w.missedMove))
 		plan = w.painter.Plan(frame.Placements, frame.EraseSGR, force)
 	}
+	debugFrameWrite(p, sanitized, marked, haveFrame, frame, plan, w.painter.Live())
 
 	// Forward the real title only when it changed; otherwise the marked
 	// OSC 2 was already dropped by the sanitizer and stays dropped.
