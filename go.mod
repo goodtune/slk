@@ -13,7 +13,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/gen2brain/beeep v0.11.3
 	github.com/godbus/dbus/v5 v5.1.0
-	github.com/goodtune/dotvault v0.38.1-0.20261103224136-aba93689ab33
+	github.com/goodtune/dotvault v0.40.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/mattn/go-sixel v0.0.9
 	github.com/muesli/reflow v0.3.0
