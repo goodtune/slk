@@ -348,7 +348,7 @@ func run() error {
 	// text diff. Kitty uploads share the same serialized writer so
 	// byte streams from different goroutines can't interleave.
 	sixelFrames := imgpkg.NewSixelFrameStore()
-	terminalOutput := imgpkg.NewFrameOutput(os.Stdout, sixelFrames)
+	terminalOutput := imgpkg.NewFrameOutput(debugFrameDump(os.Stdout), sixelFrames)
 	imgpkg.KittyOutput = terminalOutput.SideChannel()
 	app.SetSixelFrameStore(sixelFrames)
 	app.SetClipboardAvailable(clipboardOK)
